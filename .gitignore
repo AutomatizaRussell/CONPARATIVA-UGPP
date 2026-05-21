@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+build/
+dist/
+convertidor/Datos/
+*.xlsx
+*.pdf
+*.txt
