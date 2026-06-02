@@ -1,0 +1,441 @@
+# Manual de Usuario
+## Sistema de Conversión y Consolidación de Planillas PDF
+### Versión 1.0 — Junio 2026
+
+---
+
+## Tabla de Contenido
+
+1. [Descripción General](#1-descripción-general)
+2. [Requisitos del Sistema](#2-requisitos-del-sistema)
+3. [Estructura de Carpetas](#3-estructura-de-carpetas)
+4. [Flujo de Trabajo Completo](#4-flujo-de-trabajo-completo)
+5. [Módulo 1 — Convertidor de Planilla UGPP](#5-módulo-1--convertidor-de-planilla-ugpp)
+6. [Módulo 2 — Extractor de Planilla Resumen](#6-módulo-2--extractor-de-planilla-resumen)
+7. [Módulo 3 — Extractor de Facturas](#7-módulo-3--extractor-de-facturas)
+8. [Módulo 4 — Excel a JSON](#8-módulo-4--excel-a-json)
+9. [Módulo 5 — Consolidador Final](#9-módulo-5--consolidador-final)
+10. [Formato de los Archivos Generados](#10-formato-de-los-archivos-generados)
+11. [Solución de Problemas](#11-solución-de-problemas)
+
+---
+
+## 1. Descripción General
+
+Este sistema procesa documentos PDF de seguridad social (planillas UGPP, resúmenes de Aportes en Línea y facturas de empleados) y los convierte en archivos Excel estructurados y consolidados, listos para revisión contable o liquidación de nómina.
+
+El sistema está compuesto por cinco módulos independientes que trabajan de forma secuencial:
+
+```
+PDF Planilla UGPP  ──► convertidor.py  ──►  *_estructurado.xlsx
+PDF Aportes en Línea ► convertidor2.py ──►  *_PLANILLA.xlsx
+PDF Facturas       ──► factura.py      ──►  *_facturas.xlsx
+                                                    │
+                                        excel_a_json.py
+                                                    │
+                                             *.json
+                                                    │
+                                        poblar_excel.py
+                                                    │
+                                    *_CONSOLIDADO.xlsx  ◄── Resultado final
+```
+
+---
+
+## 2. Requisitos del Sistema
+
+- **Sistema Operativo:** Windows 10 u 11
+- **Python:** 3.9 o superior (con entorno virtual `venv` activado)
+- **Dependencias instaladas:**
+  - `pdfplumber`
+  - `pandas`
+  - `openpyxl`
+  - `tkinter` (incluido con Python en Windows)
+
+Para verificar que el entorno está activo, la consola debe mostrar `(venv)` al inicio del prompt.
+
+---
+
+## 3. Estructura de Carpetas
+
+```
+pdf_convertidor/
+├── convertidor/
+│   ├── convertidor.py       ← Módulo 1: Planilla UGPP → Excel
+│   ├── convertidor2.py      ← Módulo 2: Resumen Aportes en Línea → Excel
+│   ├── factura.py           ← Módulo 3: Facturas → Excel
+│   ├── excel_a_json.py      ← Módulo 4: Excel → JSON
+│   ├── poblar_excel.py      ← Módulo 5: JSON → Excel Consolidado
+│   ├── excel.py             ← Plantilla base del consolidado (interno)
+│   └── Datos/               ← Todos los archivos generados se guardan aquí
+│       ├── *_estructurado.xlsx
+│       ├── *_facturas.xlsx
+│       ├── *_PLANILLA.xlsx
+│       ├── *.json
+│       └── *_CONSOLIDADO.xlsx
+└── venv/                    ← Entorno virtual Python
+```
+
+> **Importante:** La carpeta `Datos` se crea automáticamente la primera vez que se ejecuta cualquier módulo. No es necesario crearla manualmente.
+
+---
+
+## 4. Flujo de Trabajo Completo
+
+El proceso completo para generar el Excel consolidado de un mes sigue estos pasos:
+
+| Paso | Módulo | Entrada | Salida |
+|------|--------|---------|--------|
+| 1 | `convertidor.py` | PDF planilla UGPP | `NOMBRE_estructurado.xlsx` |
+| 2 | `factura.py` | PDF facturas del mes | `NOMBRE_facturas.xlsx` |
+| 3 | `excel_a_json.py` | Ambos `.xlsx` anteriores | `NOMBRE_estructurado.json` y `NOMBRE_facturas.json` |
+| 4 | `poblar_excel.py` | Ambos `.json` anteriores | `NOMBRE_CONSOLIDADO.xlsx` |
+
+> **Nota:** El Módulo 2 (`convertidor2.py`) es opcional y genera un resumen independiente de la planilla de Aportes en Línea. No es necesario para el flujo del consolidado.
+
+---
+
+## 5. Módulo 1 — Convertidor de Planilla UGPP
+
+**Archivo:** `convertidor/convertidor.py`
+
+### ¿Qué hace?
+
+Extrae las tablas de una planilla PDF de la UGPP y las exporta a un archivo Excel con formato profesional. Detecta automáticamente el inicio y fin de cada tabla dentro del PDF, y separa los tipos de documento (CC, CE, NIT, TI) del número de identificación.
+
+### Cómo ejecutarlo
+
+1. Abrir una terminal en la carpeta del proyecto.
+2. Activar el entorno virtual si aún no está activo:
+   ```
+   venv\Scripts\activate
+   ```
+3. Ejecutar el módulo:
+   ```
+   python convertidor/convertidor.py
+   ```
+4. Se abrirá un cuadro de diálogo para seleccionar el archivo PDF.
+5. Seleccionar el PDF de la planilla UGPP y hacer clic en **Abrir**.
+
+### Resultado
+
+Se genera el archivo `NOMBRE_estructurado.xlsx` en la carpeta `convertidor/Datos/`.
+
+El Excel tendrá una hoja por cada tabla detectada (`Tabla_1`, `Tabla_2`, etc.) y las columnas de identificación quedarán separadas en dos columnas:
+
+| IDENTIFICACIÓN - Tipo | IDENTIFICACIÓN - Número | NOMBRES | ... |
+|-----------------------|------------------------|---------|-----|
+| CC | 1002345678 | JUAN PÉREZ | ... |
+| CE | 987654 | MARIA GARCIA | ... |
+
+### Mensajes posibles
+
+| Mensaje | Significado |
+|---------|-------------|
+| `¡Éxito! Archivo estilizado en: ...` | El proceso terminó correctamente |
+| `No se encontraron los patrones de inicio/fin` | El PDF no tiene el formato esperado (ver sección 11) |
+| `Error en el motor de diseño: ...` | Error inesperado; revisar que el PDF no esté protegido |
+
+---
+
+## 6. Módulo 2 — Extractor de Planilla Resumen
+
+**Archivo:** `convertidor/convertidor2.py`
+
+### ¿Qué hace?
+
+Extrae la tabla de resumen de un PDF de **Aportes en Línea** (planilla mensual consolidada). Detecta automáticamente las posiciones de las columnas y filtra únicamente las filas con número consecutivo, ignorando encabezados y totales.
+
+### Cómo ejecutarlo
+
+```
+python convertidor/convertidor2.py
+```
+
+Se abrirá el cuadro de selección de archivo. Seleccionar el PDF de Aportes en Línea.
+
+### Resultado
+
+Se genera el archivo `NOMBRE_PLANILLA.xlsx` en `convertidor/Datos/`.
+
+- Encabezados en azul oscuro (`#1F3864`)
+- Panel superior congelado (fila 1 fija al hacer scroll)
+- Columnas ajustadas automáticamente al contenido
+
+### Mensajes posibles
+
+| Mensaje | Significado |
+|---------|-------------|
+| `N filas exportadas` | Proceso exitoso con N registros |
+| `No se encontraron filas` | El PDF no contiene filas con número consecutivo |
+| `No se encontró la tabla en el PDF` | El PDF no tiene estructura de tabla reconocible |
+
+---
+
+## 7. Módulo 3 — Extractor de Facturas
+
+**Archivo:** `convertidor/factura.py`
+
+### ¿Qué hace?
+
+Procesa un PDF de facturas de nómina individual (un archivo con múltiples empleados) y genera un Excel con todos los conceptos de pago por persona. Extrae automáticamente la cédula, nombre, turno y cada concepto con su código, cantidad y valores.
+
+### Cómo ejecutarlo
+
+```
+python convertidor/factura.py
+```
+
+Se abrirá el cuadro de selección de archivo. Seleccionar el PDF de facturas.
+
+### Resultado
+
+Se generan **dos archivos** en `convertidor/Datos/`:
+
+1. `NOMBRE_facturas.xlsx` — Excel con todos los conceptos extraídos:
+
+| Cédula | Nombre Empleado | Turno | Código | Concepto | Cantidad / Horas | Valor Unitario | Total |
+|--------|----------------|-------|--------|----------|-----------------|----------------|-------|
+| 1002345678 | JUAN PÉREZ | A | 001 | SALARIO BÁSICO | 1 | 3,500,000.00 | 3,500,000.00 |
+
+2. `NOMBRE_TEXTO_CRUDO.txt` — Registro de texto extraído del PDF (útil para diagnóstico).
+
+El archivo Excel se **abre automáticamente** al terminar el proceso.
+
+### Códigos de concepto relevantes
+
+| Código(s) | Concepto |
+|-----------|---------|
+| 001, 051, 052 | Salario del mes |
+| 022, 066 | Bono no salarial |
+| 026 | Auxilio de rodamiento |
+| 600–699 | Aportes salud trabajador |
+| 700–798 | Aportes pensión trabajador |
+| 799 | Fondo de Solidaridad Pensional (FSP) |
+
+---
+
+## 8. Módulo 4 — Excel a JSON
+
+**Archivo:** `convertidor/excel_a_json.py`
+
+### ¿Qué hace?
+
+Lee **todos** los archivos `.xlsx` que estén en la carpeta `Datos` y los convierte a archivos `.json` agrupados por número de documento. Este paso es necesario para que el consolidador pueda cruzar la información entre la planilla y las facturas.
+
+### Cómo ejecutarlo
+
+```
+python convertidor/excel_a_json.py
+```
+
+No requiere interacción del usuario. El proceso corre automáticamente sobre todos los archivos Excel en `Datos/`.
+
+### Resultado
+
+Por cada `.xlsx` se genera un `.json` con el mismo nombre en la carpeta `Datos/`. La estructura del JSON es:
+
+```json
+{
+  "1002345678": {
+    "documento": "1002345678",
+    "registros": [
+      { "Cédula": "1002345678", "Código": "001", "Concepto": "SALARIO", ... }
+    ]
+  },
+  "987654321": { ... }
+}
+```
+
+### Mensajes en consola
+
+```
+Procesando: DICIEMBRE_estructurado.xlsx
+  -> DICIEMBRE_estructurado.json  (45 usuarios únicos)
+Procesando: DICIEMBRE_facturas.xlsx
+  -> DICIEMBRE_facturas.json  (45 usuarios únicos)
+Conversión completada.
+```
+
+---
+
+## 9. Módulo 5 — Consolidador Final
+
+**Archivo:** `convertidor/poblar_excel.py`
+
+### ¿Qué hace?
+
+Cruza los datos del JSON de la planilla estructurada con los del JSON de facturas, para cada persona que aparezca en ambos archivos, y genera un **Excel consolidado** con el resumen de aportes y pagos por persona en el mes.
+
+### Requisito previo
+
+Los archivos JSON deben tener el **mismo prefijo de nombre**. Por ejemplo:
+
+- `DICIEMBRE_estructurado.json` ← planilla UGPP
+- `DICIEMBRE_facturas.json` ← facturas del mes
+
+El sistema detecta automáticamente los pares por nombre.
+
+### Cómo ejecutarlo
+
+```
+python convertidor/poblar_excel.py
+```
+
+### Resultado
+
+Se genera `NOMBRE_CONSOLIDADO.xlsx` en `Datos/`. El archivo tiene la siguiente estructura:
+
+**Sección A — Pago Trabajador y SS** (columnas D a J):
+
+| Col | Nombre | Fuente |
+|-----|--------|--------|
+| A | TIPO | Planilla (tipo de documento: CC, CE…) |
+| B | NÚMERO | Planilla (número de identificación) |
+| C | NOMBRE | Planilla / Facturas |
+| D | SALARIO MES | Facturas (códigos 001+051+052) |
+| E | BONO NO SALARIO | Facturas (códigos 022+066) |
+| F | SS BONO NO SALARIAL | (pendiente de configuración) |
+| G | AUX. ROD. | Facturas (código 026) |
+| H | PENSIÓN trabajador | Facturas (códigos 700–798) |
+| I | SALUD trabajador | Facturas (códigos 600–699) |
+| J | FSP trabajador | Facturas (código 799) |
+
+**Sección B — Pago Total SS Empresa** (columnas K a Q):
+
+| Col | Nombre | Fuente |
+|-----|--------|--------|
+| K | PENSIÓN empresa | Planilla estructurada |
+| L | FSP empresa | Planilla estructurada |
+| M | SALUD empresa | Planilla estructurada |
+| N | ARL | Planilla estructurada |
+| O | CCF | Planilla estructurada |
+| P | SENA | Planilla estructurada |
+| Q | ICBF | Planilla estructurada |
+| R | OBSERVACIONES | (vacío, para uso manual) |
+
+### Mensajes en consola
+
+```
+Procesando: DICIEMBRE
+  -> DICIEMBRE_CONSOLIDADO.xlsx  (45 personas)
+Listo.
+```
+
+Si hay una planilla sin su factura correspondiente:
+```
+  Aviso: 'DICIEMBRE_estructurado.json' sin facturas — se omite.
+```
+
+---
+
+## 10. Formato de los Archivos Generados
+
+Todos los archivos Excel generados comparten un diseño corporativo consistente:
+
+| Elemento | Detalle |
+|----------|---------|
+| Encabezados | Fondo azul oscuro, texto blanco, fuente Arial 11 en negrita |
+| Filas pares | Fondo gris claro (`#F5F7FA`) — efecto cebra |
+| Filas impares | Fondo blanco |
+| Bordes | Líneas finas en gris claro |
+| Columnas numéricas | Alineadas a la derecha |
+| Columnas de texto | Alineadas a la izquierda |
+| Columnas de código/tipo | Centradas, formato texto (para preservar ceros a la izquierda) |
+| Ancho de columnas | Ajustado automáticamente al contenido más largo |
+
+---
+
+## 11. Solución de Problemas
+
+### El PDF no produce resultados (tabla vacía)
+
+**Causa probable:** El PDF no tiene tablas con líneas visibles, o el formato de encabezado es diferente al esperado.
+
+**Solución:** Ejecutar el script de diagnóstico `test_tokens.py` (ajustar la ruta del PDF dentro del script) para ver cómo el sistema está leyendo el PDF:
+```
+python test_tokens.py
+```
+
+Esto imprime las filas detectadas y permite identificar si el número consecutivo de la primera columna está siendo reconocido.
+
+---
+
+### Error: "No se encontró la tabla en el PDF"
+
+**Causa probable:** El PDF de Aportes en Línea no contiene tablas con al menos 10 columnas definidas por líneas.
+
+**Solución:** Verificar que el PDF sea el correcto (resumen mensual de Aportes en Línea, no un comprobante individual). Algunos PDFs generados como imágenes escaneadas no son procesables.
+
+---
+
+### El Excel se genera pero faltan datos de empresa (columnas K a Q en blanco)
+
+**Causa probable:** El número de documento de la persona no coincide exactamente entre el JSON de la planilla y el de facturas.
+
+**Verificación:** Abrir ambos JSON en un editor de texto y buscar el número de cédula. Si en uno aparece con puntos (`1.002.345.678`) y en el otro sin puntos (`1002345678`), hay una discrepancia.
+
+**Solución temporal:** Estandarizar los números de documento en la planilla PDF antes de procesarla.
+
+---
+
+### Error: "No se encontraron pares estructurado+facturas"
+
+**Causa:** Los archivos JSON en la carpeta `Datos` no comparten el mismo prefijo de nombre.
+
+**Ejemplo de error:**
+```
+Datos/
+├── DICIEMBRE2025_estructurado.json
+└── DIC_facturas.json
+```
+
+**Corrección:** Renombrar los archivos para que el prefijo sea idéntico:
+```
+Datos/
+├── DICIEMBRE_estructurado.json
+└── DICIEMBRE_facturas.json
+```
+
+---
+
+### El archivo Excel generado no se puede abrir
+
+**Causa probable:** El archivo quedó bloqueado por un proceso anterior de Excel.
+
+**Solución:** Cerrar cualquier archivo Excel abierto que tenga el mismo nombre y volver a ejecutar el módulo.
+
+---
+
+### Números de documento con ceros a la izquierda se pierden en Excel
+
+**El sistema ya maneja esto automáticamente.** Las columnas de número de documento usan formato de texto (`@`) en Excel para preservar los ceros iniciales. Si se ve el problema, verificar que no se haya reformateado la celda manualmente.
+
+---
+
+## Apéndice — Comandos de Ejecución Rápida
+
+```powershell
+# Activar entorno virtual
+venv\Scripts\activate
+
+# Módulo 1: Planilla UGPP → Excel
+python convertidor/convertidor.py
+
+# Módulo 2: Aportes en Línea → Excel (opcional)
+python convertidor/convertidor2.py
+
+# Módulo 3: Facturas → Excel
+python convertidor/factura.py
+
+# Módulo 4: Excel → JSON (todos los archivos en Datos/)
+python convertidor/excel_a_json.py
+
+# Módulo 5: JSON → Excel Consolidado
+python convertidor/poblar_excel.py
+```
+
+---
+
+*Sistema desarrollado para procesamiento interno de planillas de seguridad social.*
+*Para soporte técnico contactar al administrador del sistema.*
