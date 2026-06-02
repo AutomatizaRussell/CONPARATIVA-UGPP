@@ -1,7 +1,8 @@
 """
 convertidor2.py – Extractor Planilla Resumen (Aportes en Línea)
-- Detecta las columnas desde la tabla real del PDF
-- Fuerza esas mismas columnas en TODAS las páginas
+Funciona con cualquier PDF (Diciembre, Octubre, etc.)
+- Extrae cada página con su tabla nativa
+- Comprime cada fila quitando celdas vacías → estructura consistente
 - Filtra solo filas que empiecen con número consecutivo
 """
 
@@ -13,84 +14,43 @@ from openpyxl.utils import get_column_letter
 from tkinter import Tk, filedialog, messagebox
 
 
-def detectar_col_xs(pdf):
-    """
-    Extrae las posiciones X de columnas desde la tabla con MENOS columnas
-    que tenga filas numeradas (evita tomar página 1 que incluye encabezado).
-    """
-    candidatos = []
-    for pag in pdf.pages:
-        tablas = pag.find_tables({
-            "vertical_strategy":   "lines",
-            "horizontal_strategy": "lines",
-            "snap_tolerance": 4,
-        })
-        for t in tablas:
-            data = t.extract()
-            if any(str(f[0] or "").strip().isdigit() for f in data if f):
-                if t.cells:
-                    xs = sorted(set(round(c[0], 1) for c in t.cells))
-                    if len(xs) >= 10:
-                        candidatos.append(xs)
-    if not candidatos:
-        return None
-    # Usar la que tenga MENOS posiciones X (tabla más limpia, sin encabezado)
-    xs = min(candidatos, key=len)
-    # Añadir borde derecho de la tabla para capturar la última columna (Total)
-    for pag in pdf.pages:
-        tablas = pag.find_tables({
-            "vertical_strategy": "lines",
-            "horizontal_strategy": "lines",
-            "snap_tolerance": 4,
-        })
-        for t in tablas:
-            data = t.extract()
-            if len(data[0]) == len(xs) if data else False:
-                borde_der = round(t.bbox[2], 1)
-                if borde_der not in xs:
-                    xs = xs + [borde_der]
-                return xs
-    return xs
-
-
 def extraer(ruta):
     todas = []
 
     with pdfplumber.open(ruta) as pdf:
-
-        # Obtener posiciones X de columnas (referencia desde cualquier página)
-        col_xs = detectar_col_xs(pdf)
-        if not col_xs:
-            raise RuntimeError("No se encontró la tabla en el PDF.")
-
-        # Configuración que FUERZA las mismas columnas en todas las páginas
-        settings = {
-            "vertical_strategy":      "explicit",
-            "explicit_vertical_lines": col_xs,
-            "horizontal_strategy":    "lines",
-            "snap_tolerance":          4,
-            "join_tolerance":          4,
-        }
-
         for pag in pdf.pages:
-            tabla = pag.extract_table(settings)
-            if not tabla:
+            tablas = pag.find_tables({
+                "vertical_strategy":   "lines",
+                "horizontal_strategy": "lines",
+                "snap_tolerance": 4,
+            })
+            if not tablas:
                 continue
 
+            # Tomar la tabla más grande de la página
+            tabla = max(tablas, key=lambda t: len(t.extract())).extract()
+
             for fila in tabla:
+                # Limpiar y comprimir (quitar celdas vacías)
                 celdas = [str(c or "").replace("\n", " ").strip() for c in fila]
-                primer = celdas[0] if celdas else ""
+                compact = [v for v in celdas if v]
+
+                if not compact:
+                    continue
+
+                # Solo filas que empiecen con número consecutivo
+                primer = compact[0]
                 if primer.isdigit() and 1 <= int(primer) <= 9999:
-                    todas.append(celdas)
+                    todas.append(compact)
 
     if not todas:
         return pd.DataFrame()
 
+    # Normalizar ancho (todas las filas al mismo largo)
     ancho = max(len(f) for f in todas)
     todas = [f + [""] * (ancho - len(f)) for f in todas]
 
     df = pd.DataFrame(todas)
-    df = df.loc[:, (df != "").any(axis=0)]
     df = df.sort_values(0, key=lambda s: pd.to_numeric(s, errors="coerce").fillna(9999))
     df = df.reset_index(drop=True)
     return df
